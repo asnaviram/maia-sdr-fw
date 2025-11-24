@@ -28,7 +28,7 @@ $(error "      3] export VIVADO_VERSION=v20xx.x")
 endif
 
 TARGET ?= pluto
-SUPPORTED_TARGETS:=pluto sidekiqz2
+SUPPORTED_TARGETS:=pluto sidekiqz2 ant
 
 # Include target specific constants
 include scripts/$(TARGET).mk
@@ -91,12 +91,15 @@ build/uboot-env.bin: build/uboot-env.txt
 linux/arch/arm/boot/zImage: TOOLCHAIN
 	$(TOOLS_PATH) make -C linux ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) zynq_$(TARGET)_defconfig
 	$(TOOLS_PATH) make -C linux -j $(NCORES) ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) zImage UIMAGE_LOADADDR=0x8000
-
+	$(TOOLS_PATH) make -C linux -j $(NCORES) ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) uImage UIMAGE_LOADADDR=0x8000
 
 .PHONY: linux/arch/arm/boot/zImage
-
+.PHONY: linux/arch/arm/boot/uImage
 
 build/zImage: linux/arch/arm/boot/zImage | build
+	cp $< $@
+
+build/uImage: linux/arch/arm/boot/uImage | build
 	cp $< $@
 
 ### Device Tree ###
@@ -178,6 +181,7 @@ build/$(TARGET).dfu: build/$(TARGET).itb
 clean-build:
 	rm -f $(notdir $(wildcard build/*))
 	rm -rf build/*
+	rm -rf build_sdimg
 
 clean:
 	make -C u-boot-xlnx clean
@@ -186,6 +190,27 @@ clean:
 	make -C hdl clean
 	rm -f $(notdir $(wildcard build/*))
 	rm -rf build/*
+	rm -rf build_sdimg
+
+SDIMGDIR = $(CURDIR)/build_sdimg
+sdimg: build/
+	mkdir $(SDIMGDIR)
+	cp build/sdk/fsbl/Release/fsbl.elf 	$(SDIMGDIR)/fsbl.elf
+	cp build/sdk/hw_0/system_top.bit 	$(SDIMGDIR)/system_top.bit
+	cp build/u-boot.elf 			$(SDIMGDIR)/u-boot.elf
+	cp $(CURDIR)/linux/arch/arm/boot/uImage	$(SDIMGDIR)/uImage
+	cp build/zynq-$(TARGET).dtb 	$(SDIMGDIR)/devicetree.dtb
+	cp build/uboot-env.txt  		$(SDIMGDIR)/uEnv.txt
+	cp build/rootfs.cpio.gz  		$(SDIMGDIR)/ramdisk.image.gz
+	mkimage -A arm -T ramdisk -C gzip -d $(SDIMGDIR)/ramdisk.image.gz $(SDIMGDIR)/uramdisk.image.gz
+	touch 	$(SDIMGDIR)/boot.bif
+	echo "img:{[bootloader] $(SDIMGDIR)/fsbl.elf  $(SDIMGDIR)/system_top.bit  $(SDIMGDIR)/u-boot.elf}" >  $(SDIMGDIR)/boot.bif
+	bash -c "source $(VIVADO_SETTINGS) && bootgen -image $(SDIMGDIR)/boot.bif -o i $(SDIMGDIR)/BOOT.bin"
+	rm $(SDIMGDIR)/fsbl.elf
+	rm $(SDIMGDIR)/system_top.bit
+	rm $(SDIMGDIR)/u-boot.elf
+	rm $(SDIMGDIR)/ramdisk.image.gz
+	rm $(SDIMGDIR)/boot.bif
 
 zip-all: $(TARGETS)
 	zip -j build/$(ZIP_ARCHIVE_PREFIX)-fw-$(VERSION).zip $^
